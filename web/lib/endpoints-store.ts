@@ -1,9 +1,5 @@
-import fs from "node:fs";
-import path from "node:path";
+import { readJson, writeJson } from "./kv";
 import { endpointKey } from "./endpoint-key";
-
-const DATA_DIR = path.join(process.cwd(), ".data");
-const FILE = path.join(DATA_DIR, "endpoints.json");
 
 export type Endpoint = { method: string; path: string; query?: string[]; active?: boolean };
 
@@ -14,41 +10,36 @@ const seed: Endpoint[] = [
   { method: "DELETE", path: "/users", query: ["id"] },
 ];
 
-function writeList(list: Endpoint[]) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(FILE, JSON.stringify(list, null, 2));
+const writeList = (list: Endpoint[]) => writeJson("endpoints", list);
+
+async function readList(): Promise<Endpoint[]> {
+  const list = await readJson<Endpoint[] | null>("endpoints", null);
+  if (list) return list;
+  await writeList(seed);
+  return seed;
 }
 
-function readList(): Endpoint[] {
-  try {
-    return JSON.parse(fs.readFileSync(FILE, "utf-8"));
-  } catch {
-    writeList(seed);
-    return seed;
-  }
-}
-
-export function getEndpoints(): Endpoint[] {
+export function getEndpoints(): Promise<Endpoint[]> {
   return readList();
 }
 
-export function addEndpoint(ep: Endpoint): Endpoint[] {
-  const list = readList();
+export async function addEndpoint(ep: Endpoint): Promise<Endpoint[]> {
+  const list = await readList();
   if (!list.some((e) => endpointKey(e) === endpointKey(ep))) {
     list.push({ ...ep, active: true });
-    writeList(list);
+    await writeList(list);
   }
   return list;
 }
 
-export function removeEndpoint(ep: Endpoint): Endpoint[] {
-  const list = readList().filter((e) => endpointKey(e) !== endpointKey(ep));
-  writeList(list);
+export async function removeEndpoint(ep: Endpoint): Promise<Endpoint[]> {
+  const list = (await readList()).filter((e) => endpointKey(e) !== endpointKey(ep));
+  await writeList(list);
   return list;
 }
 
-export function setEndpointActive(ep: Endpoint, active: boolean): Endpoint[] {
-  const list = readList().map((e) => (endpointKey(e) === endpointKey(ep) ? { ...e, active } : e));
-  writeList(list);
+export async function setEndpointActive(ep: Endpoint, active: boolean): Promise<Endpoint[]> {
+  const list = (await readList()).map((e) => (endpointKey(e) === endpointKey(ep) ? { ...e, active } : e));
+  await writeList(list);
   return list;
 }

@@ -5,10 +5,10 @@ import { addLog } from "@/lib/log-store";
 
 export async function serveMock(req: NextRequest, key: string, context: Record<string, unknown>) {
   const path = new URL(req.url).pathname;
-  const config = getMockConfig(key);
+  const config = await getMockConfig(key);
 
   if (!config) {
-    addLog({ method: req.method, path, status: 404 });
+    await addLog({ method: req.method, path, status: 404 });
     return NextResponse.json(
       { error: "설정된 응답이 없습니다 — 대시보드에서 먼저 저장하세요" },
       { status: 404 }
@@ -19,6 +19,6 @@ export async function serveMock(req: NextRequest, key: string, context: Record<s
 
   const status = config.status ?? 200;
   const rendered = renderTemplate(JSON.parse(config.body), context);
-  addLog({ method: req.method, path, status });
+  await addLog({ method: req.method, path, status });
   return NextResponse.json(rendered, { status });
 }

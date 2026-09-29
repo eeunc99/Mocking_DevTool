@@ -10,7 +10,7 @@ import { getResponseOverrides } from "@/lib/mock-store";
 
 // stateful(레코드 CRUD) 응답에도 delay/status 시뮬레이션을 적용 — 실패(4xx/5xx) 응답은 그대로 두고 성공 응답만 덮어씀
 async function applyOverrides(key: string, res: NextResponse): Promise<NextResponse> {
-  const { status, delay } = getResponseOverrides(key);
+  const { status, delay } = await getResponseOverrides(key);
   if (delay) await new Promise((r) => setTimeout(r, delay));
   if (status && res.status >= 200 && res.status < 300) {
     const body = await res.json().catch(() => null);
@@ -50,13 +50,13 @@ function matchPath(pattern: string, actual: string[]): Record<string, string> | 
 }
 
 // id 쿼리가 있으면 그대로, name 쿼리면 매칭되는 레코드의 id로 변환. 대상 지정을 항상 id로 통일.
-function resolveTargetId(url: URL, resource: string): string | null {
+async function resolveTargetId(url: URL, resource: string): Promise<string | null> {
   const queryId = url.searchParams.get("id");
   if (queryId) return queryId;
 
   const name = url.searchParams.get("name");
   if (name) {
-    const record = listRecords(resource).find((r) => String(r.name) === name);
+    const record = (await listRecords(resource)).find((r) => String(r.name) === name);
     return record ? String(record.id) : null;
   }
 
@@ -70,56 +70,56 @@ function serveStateful(req: NextRequest, method: string, resource: string) {
   return (async () => {
     if (method === "GET") {
       if (!url.searchParams.has("id") && !url.searchParams.has("name")) {
-        addLog({ method, path, status: 200 });
-        return NextResponse.json(listRecords(resource));
+        await addLog({ method, path, status: 200 });
+        return NextResponse.json(await listRecords(resource));
       }
 
-      const targetId = resolveTargetId(url, resource);
-      const result = targetId ? getRecord(resource, targetId) : undefined;
+      const targetId = await resolveTargetId(url, resource);
+      const result = targetId ? await getRecord(resource, targetId) : undefined;
       if (!result) {
-        addLog({ method, path, status: 404 });
+        await addLog({ method, path, status: 404 });
         return NextResponse.json({ error: "record not found" }, { status: 404 });
       }
-      addLog({ method, path, status: 200 });
+      await addLog({ method, path, status: 200 });
       return NextResponse.json(result);
     }
 
     if (method === "POST") {
       const body = await req.json().catch(() => ({}));
-      const record = createRecord(resource, body);
-      addLog({ method, path, status: 201 });
+      const record = await createRecord(resource, body);
+      await addLog({ method, path, status: 201 });
       return NextResponse.json(record, { status: 201 });
     }
 
     // PUT/DELETE는 대상을 반드시 ?id= 또는 ?name=으로 지정해야 함 — 없으면 전체 대상 취급하지 않고 400
     if (method === "PUT") {
-      const targetId = resolveTargetId(url, resource);
+      const targetId = await resolveTargetId(url, resource);
       if (!targetId) {
-        addLog({ method, path, status: 400 });
+        await addLog({ method, path, status: 400 });
         return NextResponse.json({ error: "id 또는 name 쿼리로 대상을 지정하세요" }, { status: 400 });
       }
       const body = await req.json().catch(() => ({}));
-      const record = updateRecord(resource, targetId, body);
+      const record = await updateRecord(resource, targetId, body);
       if (!record) {
-        addLog({ method, path, status: 404 });
+        await addLog({ method, path, status: 404 });
         return NextResponse.json({ error: "record not found" }, { status: 404 });
       }
-      addLog({ method, path, status: 200 });
+      await addLog({ method, path, status: 200 });
       return NextResponse.json(record);
     }
 
     if (method === "DELETE") {
-      const targetId = resolveTargetId(url, resource);
+      const targetId = await resolveTargetId(url, resource);
       if (!targetId) {
-        addLog({ method, path, status: 400 });
+        await addLog({ method, path, status: 400 });
         return NextResponse.json({ error: "id 또는 name 쿼리로 대상을 지정하세요" }, { status: 400 });
       }
-      const ok = deleteRecord(resource, targetId);
+      const ok = await deleteRecord(resource, targetId);
       if (!ok) {
-        addLog({ method, path, status: 404 });
+        await addLog({ method, path, status: 404 });
         return NextResponse.json({ error: "record not found" }, { status: 404 });
       }
-      addLog({ method, path, status: 200 });
+      await addLog({ method, path, status: 200 });
       return NextResponse.json({ deleted: true });
     }
 
@@ -133,7 +133,7 @@ async function handle(req: NextRequest, method: string, ctx: Ctx) {
   const { slug } = await ctx.params;
   const segs = slug ?? [];
   const url = new URL(req.url);
-  const candidates = sortByStaticPriority(getEndpoints()).filter((e) => e.method === method);
+  const candidates = sortByStaticPriority(await getEndpoints()).filter((e) => e.method === method);
 
   for (const ep of candidates) {
     const params = matchPath(ep.path, segs);
@@ -141,12 +141,12 @@ async function handle(req: NextRequest, method: string, ctx: Ctx) {
     if (!queryKeysMatch(ep.query, url)) continue;
 
     if (ep.active === false) {
-      addLog({ method, path: url.pathname, status: 503 });
+      await addLog({ method, path: url.pathname, status: 503 });
       return NextResponse.json({ error: "이 엔드포인트는 비활성화 상태입니다" }, { status: 503 });
     }
 
     const resource = resourceOf(ep.path);
-    if (isStateful(resource)) {
+    if (await isStateful(resource)) {
       const res = await serveStateful(req, method, resource);
       return applyOverrides(endpointKey(ep), res);
     }
@@ -158,7 +158,7 @@ async function handle(req: NextRequest, method: string, ctx: Ctx) {
     return serveMock(req, endpointKey(ep), context);
   }
 
-  addLog({ method, path: url.pathname, status: 404 });
+  await addLog({ method, path: url.pathname, status: 404 });
   return NextResponse.json({ error: "등록된 엔드포인트가 없습니다 (경로/쿼리 조합을 확인하세요)" }, { status: 404 });
 }
 
